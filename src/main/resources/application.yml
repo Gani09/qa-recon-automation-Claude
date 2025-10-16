@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: qa-recon-automation-2
+  data:
+    mongodb:
+      uri: mongodb://localhost:27017/optis_dev
+      database: optis_dev
+
+server:
+  port: 8080
