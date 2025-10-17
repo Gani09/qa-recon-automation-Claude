@@ -6,49 +6,48 @@ import com.fiserv.optis.qarecon.engine.ReconciliationEngine.ReconciliationResult
 import com.fiserv.optis.qarecon.model.ReconciliationSpec;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 public final class ReportWriter {
-    private ReportWriter(){}
 
     public static void writeAll(ReconciliationSpec spec, ReconciliationResult r, String outDir) throws IOException {
-        Path base = Path.of(outDir.replace("{{date}}", LocalDate.now().toString()));
+        Path base = Path.of(outDir.replace("{{date}}", java.time.LocalDate.now().toString()));
         Files.createDirectories(base);
 
+        // JSON result
         ObjectMapper om = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
-        Files.writeString(base.resolve("recon-result.json"), om.writeValueAsString(r), StandardCharsets.UTF_8);
+        Files.writeString(base.resolve("recon-result.json"), om.writeValueAsString(r));
 
-        writeCsv(base.resolve("left-only.csv"), "key", r.leftOnlyKeys);
-        writeCsv(base.resolve("right-only.csv"), "key", r.rightOnlyKeys);
+        // CSVs
+        writeCsv(base.resolve("left-only.csv"), r.leftOnlyKeys);
+        writeCsv(base.resolve("right-only.csv"), r.rightOnlyKeys);
 
-        List<String> lines = new ArrayList<>();
-        lines.add("key,leftField,rightField,type,leftValue,rightValue,delta,tolerance");
-        r.fieldDiffs.stream()
-            .map(d -> String.join(",", safe(d.key), safe(d.leftField), safe(d.rightField), safe(d.type),
-                                   safe(d.leftValue), safe(d.rightValue), safe(d.delta), safe(d.tolerance)))
-            .forEach(lines::add);
-        Files.write(base.resolve("mismatches.csv"), lines, StandardCharsets.UTF_8);
+        // mismatches
+        var header = "key,leftField,rightField,type,leftValue,rightValue,delta,tolerance";
+        var rows = r.fieldDiffs.stream().map(d -> String.join(",",
+                safe(d.key), safe(d.leftField), safe(d.rightField), safe(d.type),
+                safe(d.leftValue), safe(d.rightValue), safe(d.delta), safe(d.tolerance)
+        )).collect(Collectors.toList());
+        Files.write(base.resolve("mismatches.csv"),
+        java.util.stream.Stream.concat(java.util.stream.Stream.of(header), rows.stream()).collect(Collectors.toList()));
     }
 
-    private static void writeCsv(Path path, String header, Collection<String> keys) throws IOException {
-        List<String> lines = new ArrayList<>(keys.size()+1);
-        lines.add(header);
-        for (String k : keys) lines.add(safe(k));
-        Files.write(path, lines, StandardCharsets.UTF_8);
+    private static void writeCsv(Path path, Set<String> keys) throws IOException {
+        Files.write(path, java.util.stream.Stream.concat(
+                java.util.stream.Stream.of("key"),
+        keys.stream().map(ReportWriter::safe)
+        ).collect(Collectors.toList()));
     }
 
     private static String safe(Object o) {
         if (o == null) return "";
         String s = String.valueOf(o);
-        s = s.replace("\r\n", " ").replace("\n", " ").replace("\r", " ");
-        if (s.indexOf(',') >= 0 || s.indexOf('"') >= 0) {
-            s = '"' + s.replace(""", """") + '"';
+        if (s.contains(",") || s.contains("\"")) {
+            s = s.replace("\"", "\"\"");
+            s = "\"" + s + "\"";
         }
         return s;
     }

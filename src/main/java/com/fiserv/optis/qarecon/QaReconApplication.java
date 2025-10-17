@@ -9,6 +9,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
 @SpringBootApplication
 @EnableAsync
 public class QaReconApplication {
+
     public static void main(String[] args) {
         ApplicationContext ctx = SpringApplication.run(QaReconApplication.class, args);
         SpringContextHolder.setApplicationContext(ctx);

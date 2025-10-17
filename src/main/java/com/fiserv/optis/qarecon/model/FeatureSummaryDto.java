@@ -1,15 +1,33 @@
 package com.fiserv.optis.qarecon.model;
 
 public class FeatureSummaryDto {
+
     private String featureId;
     private String featureName;
 
-    public FeatureSummaryDto(){}
-    public FeatureSummaryDto(String featureId, String featureName){
-        this.featureId = featureId; this.featureName = featureName;
+    // Default constructor
+    public FeatureSummaryDto() {}
+
+    // Full constructor
+    public FeatureSummaryDto(String featureId, String featureName) {
+        this.featureId = featureId;
+        this.featureName = featureName;
     }
-    public String getFeatureId(){ return featureId; }
-    public void setFeatureId(String id){ this.featureId = id; }
-    public String getFeatureName(){ return featureName; }
-    public void setFeatureName(String n){ this.featureName = n; }
+
+    // Getters and setters
+    public String getFeatureId() {
+        return featureId;
+    }
+
+    public void setFeatureId(String featureId) {
+        this.featureId = featureId;
+    }
+
+    public String getFeatureName() {
+        return featureName;
+    }
+
+    public void setFeatureName(String featureName) {
+        this.featureName = featureName;
+    }
 }

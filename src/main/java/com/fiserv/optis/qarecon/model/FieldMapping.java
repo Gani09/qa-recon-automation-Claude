@@ -5,33 +5,80 @@ import java.time.Duration;
 import java.util.Map;
 
 public final class FieldMapping {
+
     private String leftField;
     private String rightField;
     private String compareAs;
-    private String tolerance;
+    private String tolerance; // numeric tolerance or ISO-8601 duration for datetime
 
-    public FieldMapping(){}
-    public FieldMapping(String leftField, String rightField, String compareAs, String tolerance){
-        this.leftField = leftField; this.rightField = rightField;
+    public BigDecimal numericTolerance;
+    public Duration timeTolerance;
+
+    // Default constructor for Jackson
+    public FieldMapping() {}
+
+    // Full constructor
+    public FieldMapping(String leftField, String rightField, String compareAs, String tolerance) {
+        this.leftField = leftField;
+        this.rightField = rightField;
         this.compareAs = compareAs == null ? "string" : compareAs;
         this.tolerance = tolerance;
     }
 
-    public String getLeftField(){ return leftField; }
-    public void setLeftField(String s){ this.leftField = s; }
-    public String getRightField(){ return rightField; }
-    public void setRightField(String s){ this.rightField = s; }
-    public String getCompareAs(){ return compareAs; }
-    public void setCompareAs(String s){ this.compareAs = s; }
-    public String getTolerance(){ return tolerance; }
-    public void setTolerance(String s){ this.tolerance = s; }
-
-    public static FieldMapping from(Map<String,String> row){
-        return new FieldMapping(val(row,"left_field"), val(row,"right_field"), val(row,"compare_as"), val(row,"tolerance"));
+    public static FieldMapping from(Map<String, String> row) {
+        return new FieldMapping(
+                val(row, "left_field"),
+                val(row, "right_field"),
+                val(row, "compare_as"),
+                val(row, "tolerance")
+        );
     }
 
-    public BigDecimal numericToleranceOr(BigDecimal def){ return (tolerance==null || tolerance.isBlank()) ? def : new BigDecimal(tolerance); }
-    public Duration timeToleranceOr(Duration def){ return (tolerance==null || tolerance.isBlank()) ? def : Duration.parse(tolerance); }
+    public BigDecimal numericToleranceOr(BigDecimal def) {
+        if (tolerance == null || tolerance.isBlank()) return def;
+        return new BigDecimal(tolerance);
+    }
 
-    private static String val(Map<String,String> m, String k){ String v = m.get(k); return v==null ? null : v.trim(); }
+    public Duration timeToleranceOr(Duration def) {
+        if (tolerance == null || tolerance.isBlank()) return def;
+        return Duration.parse(tolerance);
+    }
+
+    private static String val(Map<String, String> m, String k) {
+        String v = m.get(k);
+        return v == null ? null : v.trim();
+    }
+
+    // Getters and setters
+    public String getLeftField() {
+        return leftField;
+    }
+
+    public void setLeftField(String leftField) {
+        this.leftField = leftField;
+    }
+
+    public String getRightField() {
+        return rightField;
+    }
+
+    public void setRightField(String rightField) {
+        this.rightField = rightField;
+    }
+
+    public String getCompareAs() {
+        return compareAs;
+    }
+
+    public void setCompareAs(String compareAs) {
+        this.compareAs = compareAs;
+    }
+
+    public String getTolerance() {
+        return tolerance;
+    }
+
+    public void setTolerance(String tolerance) {
+        this.tolerance = tolerance;
+    }
 }

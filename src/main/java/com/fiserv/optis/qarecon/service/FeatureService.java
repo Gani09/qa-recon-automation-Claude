@@ -1,19 +1,28 @@
 package com.fiserv.optis.qarecon.service;
 
-import com.fiserv.optis.qarecon.model.entities.FeatureEntity;
-import com.fiserv.optis.qarecon.repository.FeatureRepository;
 import org.springframework.stereotype.Service;
 
+import com.fiserv.optis.qarecon.model.entities.FeatureEntity;
+import com.fiserv.optis.qarecon.repository.FeatureRepository;
 import java.util.List;
 import java.util.Optional;
 
 @Service
 public class FeatureService {
-    private final FeatureRepository repo;
-    public FeatureService(FeatureRepository repo){ this.repo = repo; }
-    public List<FeatureEntity> getAllFeatures(){ return repo.findAll(); }
-    public Optional<FeatureEntity> getFeatureById(String id){ return repo.findById(id); }
-    public Optional<FeatureEntity> getFeatureByName(String name){ return repo.findByFeatureName(name); }
-    public FeatureEntity saveFeature(FeatureEntity e){ return repo.save(e); }
-    public void deleteFeatureById(String id){ repo.deleteById(id); }
+
+    private final FeatureRepository featureRepository;
+
+    public FeatureService(FeatureRepository featureRepository) { this.featureRepository = featureRepository; }
+
+    public List<FeatureEntity> getAllFeatures() { return featureRepository.findAll(); }
+
+    public Optional<FeatureEntity> getFeatureById(String id) { return featureRepository.findById(id); }
+
+    public Optional<FeatureEntity> getFeatureByName(String featureName) {
+        return featureRepository.findByFeatureName(featureName);
+    }
+
+    public FeatureEntity saveFeature(FeatureEntity feature) { return featureRepository.save(feature); }
+
+    public void deleteFeatureById(String id) { featureRepository.deleteById(id); }
 }

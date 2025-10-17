@@ -3,15 +3,41 @@ package com.fiserv.optis.qarecon.model;
 import org.bson.Document;
 
 public class Detail {
+
     private String scenario;
-    private Document doc;
+    private org.bson.Document doc;
 
-    public String getScenario() { return scenario; }
-    public void setScenario(String scenario) { this.scenario = scenario; }
-    public Document getDoc() { return doc; }
-    public void setDoc(Document doc) { this.doc = doc; }
+    // Default constructor
+    public Detail() {}
 
-    @Override public String toString(){
-        return "Detail{scenario='%s', doc=%s}".formatted(scenario, doc==null?null:doc.toJson());
+    // Full constructor
+    public Detail(String scenario, Document doc) {
+        this.scenario = scenario;
+        this.doc = doc;
+    }
+
+    // Getters and setters
+    public String getScenario() {
+        return scenario;
+    }
+
+    public void setScenario(String scenario) {
+        this.scenario = scenario;
+    }
+
+    public org.bson.Document getDoc() {
+        return doc;
+    }
+
+    public void setDoc(org.bson.Document doc) {
+        this.doc = doc;
+    }
+
+    @Override
+    public String toString() {
+        return "Detail{" +
+                "scenario='" + scenario + '\'' +
+                ", docs=" + doc +
+                '}';
     }
 }
