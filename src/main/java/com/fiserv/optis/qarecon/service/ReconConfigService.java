@@ -1,5 +1,6 @@
 package com.fiserv.optis.qarecon.service;
 
+import com.fiserv.optis.qarecon.model.BalanceFieldConfig;
 import com.fiserv.optis.qarecon.model.entities.ReconConfigEntity;
 import com.fiserv.optis.qarecon.model.FieldMapping;
 import com.fiserv.optis.qarecon.repository.ReconConfigRepository;
@@ -32,45 +33,51 @@ public class ReconConfigService {
 
     public ReconConfigEntity processAndSaveConfig(MultipartFile file, String source, String target) throws Exception {
         try (InputStream is = file.getInputStream(); Workbook workbook = WorkbookFactory.create(is)) {
-            var filtersSheet = ExcelUtils.readSheet(workbook, "filters");
-            var filters = new java.util.HashMap<String, Object>();
-            filters.put("sourceFilter", ExcelUtils.buildFilterFromExcelRows(
-                    filtersSheet.stream().filter( row -> "source".equalsIgnoreCase(row.get("collection"))).toList()));
-            filters.put("targetFilter", ExcelUtils.buildFilterFromExcelRows(
-                    filtersSheet.stream().filter( row -> "target".equalsIgnoreCase(row.get("collection"))).toList()));
 
+            // Read all sheets
+            var filtersSheet = ExcelUtils.readSheet(workbook, "filters");
             var joinKeysSheet = ExcelUtils.readSheet(workbook, "join_keys");
             var fieldMappingsSheet = ExcelUtils.readSheet(workbook, "field_mappings");
-            var balanceFieldsSheet = ExcelUtils.readSheet(workbook, "balance_fields");
 
-            ReconConfigEntity entity = new ReconConfigEntity();
-            entity.setConfigId(UUID.randomUUID().toString());
-            entity.setConfigName("Recon_Config_"+ source + "-" + target);
-            entity.setFilters(filters);
+            // Build filters
+            var filters = new java.util.HashMap<String, Object>();
+            filters.put("sourceFilter", ExcelUtils.buildFilterFromExcelRows(
+                    filtersSheet.stream()
+                            .filter(row -> "source".equalsIgnoreCase(row.get("collection")))
+                            .toList()));
+            filters.put("targetFilter", ExcelUtils.buildFilterFromExcelRows(
+                    filtersSheet.stream()
+                            .filter(row -> "target".equalsIgnoreCase(row.get("collection")))
+                            .toList()));
 
+            // Build join keys
             List<JoinKey> joinKeys = joinKeysSheet.stream()
-                    .map( row -> new JoinKey(
-                    row.get("SourceField"),
-                    row.get("SourceFieldAs"),
-                    row.get("TargetField"),
-                    row.get("TargetFieldAs")
-            )) .toList();
-            entity.setJoinKeys(joinKeys);
+                    .map(row -> new JoinKey(
+                            row.get("SourceField"),
+                            row.get("SourceFieldAs"),
+                            row.get("TargetField"),
+                            row.get("TargetFieldAs")
+                    ))
+                    .toList();
+
+            // Build field mappings
             List<FieldMapping> fieldMappings = fieldMappingsSheet.stream()
                     .map(FieldMapping::from)
                     .toList();
+
+            // Read balance field configurations
+            List<BalanceFieldConfig> balanceFieldConfigs = ExcelUtils.readBalanceFieldConfigs(workbook, "balance_fields");
+
+            // Create and populate entity
+            ReconConfigEntity entity = new ReconConfigEntity();
+            entity.setConfigId(UUID.randomUUID().toString());
+            entity.setConfigName("Recon_Config_" + source + "-" + target);
+            entity.setFilters(filters);
+            entity.setJoinKeys(joinKeys);
             entity.setFieldMappings(fieldMappings);
+            entity.setBalanceFieldConfigs(balanceFieldConfigs);
 
-            Map<String, List<String>> balanceFields = new java.util.HashMap<>();
-            for (var row : balanceFieldsSheet) {
-                String key = row.get("collection");
-                String value = row.get("fieldName");
-                if (key != null && value != null) {
-                    balanceFields.computeIfAbsent(key, k ->new java.util.ArrayList<>()).add(value);
-                }
-            }
-            entity.setBalanceFields(balanceFields);
-
+            // Save and return
             return repository.save(entity);
         }
     }

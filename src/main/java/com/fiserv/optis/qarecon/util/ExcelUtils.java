@@ -1,5 +1,7 @@
 package com.fiserv.optis.qarecon.util;
 
+import com.fiserv.optis.qarecon.model.AggregationStrategy;
+import com.fiserv.optis.qarecon.model.BalanceFieldConfig;
 import org.apache.poi.ss.usermodel.*;
 import org.bson.Document;
 
@@ -7,6 +9,7 @@ import java.io.InputStream;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class ExcelUtils {
     public static List<Map<String, String>> readSheet(String fileName, String sheetName) throws Exception {
@@ -112,6 +115,52 @@ public class ExcelUtils {
         }
         return filters.isEmpty() ? new Document() : new Document("$and", filters);
     }
+
+
+
+    public static List<BalanceFieldConfig> readBalanceFieldConfigs(Workbook workbook, String sheetName) {
+        List<Map<String, String>> rows = readSheet(workbook, sheetName);
+        List<BalanceFieldConfig> configs = new ArrayList<>();
+
+        for (Map<String, String> row : rows) {
+            String collection = row.get("collection");
+            String fieldName = row.get("fieldName");
+            String strategyStr = row.get("aggregationStrategy");
+            String groupByStr = row.get("groupByFields");
+
+            if (collection == null || fieldName == null) {
+                continue;
+            }
+
+            AggregationStrategy strategy = AggregationStrategy.SUM; // default
+            if (strategyStr != null && !strategyStr.trim().isEmpty()) {
+                try {
+                    strategy = AggregationStrategy.valueOf(strategyStr.trim().toUpperCase());
+                } catch (IllegalArgumentException e) {
+                    // Use default if invalid
+                }
+            }
+
+            List<String> groupByFields = new ArrayList<>();
+            if (groupByStr != null && !groupByStr.trim().isEmpty()) {
+                groupByFields = Arrays.stream(groupByStr.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
+            }
+
+            BalanceFieldConfig config = new BalanceFieldConfig(
+                    collection.trim(),
+                    fieldName.trim(),
+                    strategy,
+                    groupByFields
+            );
+            configs.add(config);
+        }
+
+        return configs;
+    }
+
 
     public static List<Map<String, String>> readFieldMappings(String fileName, String sheetName) throws Exception {
         return readSheet(fileName, sheetName);

@@ -1,6 +1,7 @@
 package com.fiserv.optis.qarecon.model.entities;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fiserv.optis.qarecon.model.BalanceFieldConfig;
 import com.fiserv.optis.qarecon.model.FieldMapping;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.index.Indexed;
@@ -22,7 +23,7 @@ public class ReconConfigEntity {
     private Map<String, Object> filters;
     private List<JoinKey> joinKeys;
     private List<FieldMapping> fieldMappings;
-    private Map<String, List<String>> balanceFields;
+    private List<BalanceFieldConfig> balanceFieldConfigs;
 
     // Getters and setters
     public String getConfigId() {
@@ -65,11 +66,11 @@ public class ReconConfigEntity {
         this.fieldMappings = fieldMappings;
     }
 
-    public Map<String, List<String>> getBalanceFields() {
-        return balanceFields;
+    public List<BalanceFieldConfig> getBalanceFieldConfigs() {
+        return balanceFieldConfigs;
     }
 
-    public void setBalanceFields(Map<String, List<String>> balanceFields) {
-        this.balanceFields = balanceFields;
+    public void setBalanceFieldConfigs(List<BalanceFieldConfig> balanceFieldConfigs) {
+        this.balanceFieldConfigs = balanceFieldConfigs;
     }
 }
