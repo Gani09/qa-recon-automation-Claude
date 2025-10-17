@@ -657,12 +657,12 @@ public class StepDefinitions {
         // Convert the balanceFields map to a list of maps for compatibility
         ctx.spec.balanceFieldMappings = ctx.spec.configEntity.getBalanceFields().entrySet().stream()
                 .flatMap( entry -> entry.getValue().stream()
-                .map( field -> {
-            Map<String, String> map = new HashMap<>();
-            map.put("collection", entry.getKey());
-            map.put("fieldName", field);
-            return map;
-        })
+                        .map( field -> {
+                            Map<String, String> map = new HashMap<>();
+                            map.put("collection", entry.getKey());
+                            map.put("fieldName", field);
+                            return map;
+                        })
                 ).collect(Collectors.toList());
     }
 
@@ -709,6 +709,140 @@ public class StepDefinitions {
         }
     }
 
+    // Add these methods to StepDefinitions.java
+
+    @Given("balance field configurations from excel sheet {string}")
+    public void balance_field_configurations_from_excel_sheet(String sheetName) {
+        if (ctx.spec.configEntity == null || ctx.spec.configEntity.getBalanceFieldConfigs() == null) {
+            throw new IllegalStateException("ReconConfigEntity or its balance field configs are not loaded.");
+        }
+        ctx.spec.balanceFieldConfigs = ctx.spec.configEntity.getBalanceFieldConfigs();
+    }
+
+    @When("I aggregate balance fields for both source and target with grouping and strategy")
+    public void i_aggregate_balance_fields_with_grouping_and_strategy() {
+        if (ctx.spec.balanceFieldConfigs == null || ctx.spec.balanceFieldConfigs.isEmpty()) {
+            throw new IllegalStateException("Balance field configurations are not defined.");
+        }
+
+        // Separate source and target configurations
+        List<BalanceFieldConfig> sourceConfigs = ctx.spec.balanceFieldConfigs.stream()
+                .filter(config -> "source".equalsIgnoreCase(config.getCollection()))
+                .collect(Collectors.toList());
+
+        List<BalanceFieldConfig> targetConfigs = ctx.spec.balanceFieldConfigs.stream()
+                .filter(config -> "target".equalsIgnoreCase(config.getCollection()))
+                .collect(Collectors.toList());
+
+        // Run enhanced reconciliation with grouping and aggregation
+        ReconciliationEngine engine = new ReconciliationEngine(ctx.clients.source, ctx.clients.target);
+        ctx.result = engine.runEnhancedBalanceCheck(
+                ctx.sourceDocs,
+                ctx.targetDocs,
+                ctx.spec,
+                sourceConfigs,
+                targetConfigs,
+                ctx.spec.defaultNumericTolerance != null ? ctx.spec.defaultNumericTolerance : BigDecimal.ZERO
+        );
+    }
+
+    @Then("for each matched group, the aggregated balance from source should equal aggregated balance from target within {double} tolerance")
+    public void for_each_matched_group_aggregated_balances_should_match_within_tolerance(Double tolerance) {
+        if (ctx.result == null || ctx.result.fieldDiffs == null) {
+            throw new IllegalStateException("Reconciliation result is missing.");
+        }
+
+        if (!ctx.result.fieldDiffs.isEmpty()) {
+            // Build detailed error report
+            int count = ++counter;
+
+            List<BalanceFieldConfig> sourceConfigs = ctx.spec.balanceFieldConfigs.stream()
+                    .filter(config -> "source".equalsIgnoreCase(config.getCollection()))
+                    .collect(Collectors.toList());
+
+            List<BalanceFieldConfig> targetConfigs = ctx.spec.balanceFieldConfigs.stream()
+                    .filter(config -> "target".equalsIgnoreCase(config.getCollection()))
+                    .collect(Collectors.toList());
+
+            for (ReconciliationEngine.FieldDiff diff : ctx.result.fieldDiffs) {
+                GenericPojo gpl = GenericPojo.builder()
+                        .uniqueId(count)
+                        .srcOrTar('S')
+                        .collectionName(ctx.spec.sourceCollection)
+                        .genericSingleFieldMap(Map.of(
+                                "sourceAggregatedBalance", (BigDecimal) diff.leftValue,
+                                "groupKey", diff.key
+                        ))
+                        .build();
+
+                GenericPojo gpr = GenericPojo.builder()
+                        .uniqueId(count)
+                        .srcOrTar('T')
+                        .collectionName(ctx.spec.targetCollection)
+                        .genericSingleFieldMap(Map.of(
+                                "targetAggregatedBalance", (BigDecimal) diff.rightValue,
+                                "groupKey", diff.key,
+                                "delta", (BigDecimal) diff.delta
+                        ))
+                        .build();
+
+                if (ReportsContext.genericPojoMapForFailureWithKey == null) {
+                    ReportsContext.genericPojoMapForFailureWithKey = new HashMap<>();
+                }
+
+                String stepName = String.format(
+                        "for each matched group, the aggregated balance from source should equal aggregated balance from target within %s tolerance",
+                        tolerance
+                );
+
+                ReportsContext.genericPojoMapForFailureWithKey
+                        .computeIfAbsent(scenario.getName(), k -> new HashMap<>())
+                        .computeIfAbsent(stepName, k -> new ArrayList<>())
+                        .addAll(Arrays.asList(gpl, gpr));
+            }
+
+            throw new AssertionError(
+                    String.format("Found %d balance mismatches. Check the report for details.",
+                            ctx.result.fieldDiffs.size())
+            );
+        }
+    }
+
+    // Alternative step with more detailed configuration display
+    @Then("aggregated balances should match with the following strategies:")
+    public void aggregated_balances_should_match_with_strategies(DataTable table) {
+        // This step allows inline verification of strategies used
+        List<Map<String, String>> expectedStrategies = table.asMaps();
+
+        // Validate that configurations match expectations
+        for (Map<String, String> expected : expectedStrategies) {
+            String collection = expected.get("collection");
+            String field = expected.get("field");
+            String strategy = expected.get("strategy");
+
+            boolean found = ctx.spec.balanceFieldConfigs.stream()
+                    .anyMatch(config ->
+                            config.getCollection().equalsIgnoreCase(collection) &&
+                                    config.getFieldName().equals(field) &&
+                                    config.getAggregationStrategy().name().equalsIgnoreCase(strategy)
+                    );
+
+            if (!found) {
+                throw new AssertionError(
+                        String.format("Expected configuration not found: collection=%s, field=%s, strategy=%s",
+                                collection, field, strategy)
+                );
+            }
+        }
+
+        // Then perform the actual balance check
+        for_each_matched_group_aggregated_balances_should_match_within_tolerance(
+                ctx.spec.defaultNumericTolerance.doubleValue()
+        );
+    }
+
+
+
     @Then("for each matched record, the sum of balance fields from source should be equal to sum balance fields on target within {double} tolerance")
     public void for_each_matched_record_the_total_of_source_balance_fields_should_equal_the_total_of_target_balance_fields_within_tolerance(Double tolerance) {
         // Get the list of source balance fields from the spec or context
@@ -722,10 +856,10 @@ public class StepDefinitions {
             // Sum source balance fields
             BigDecimal sourceSum = sourceFields.stream()
                     .map(  f -> {
-                Object v = getNestedValue(pair.getLeft(), f);
-                if (v == null) return BigDecimal.ZERO;
-                try { return new BigDecimal(v.toString()); } catch (Exception e) { return BigDecimal.ZERO; }
-            })
+                        Object v = getNestedValue(pair.getLeft(), f);
+                        if (v == null) return BigDecimal.ZERO;
+                        try { return new BigDecimal(v.toString()); } catch (Exception e) { return BigDecimal.ZERO; }
+                    })
                     .reduce(BigDecimal.ZERO, BigDecimal::add);
 
             BigDecimal targetGroupedSum = pair.getRight().get("_groupedSum") != null
@@ -744,8 +878,8 @@ public class StepDefinitions {
 
                 ReportsContext.genericPojoMapForFailureWithKey.computeIfAbsent(scenario.getName(), k -> new java.util.HashMap<>())
                         .computeIfAbsent( "for each matched record, the sum of balance fields " +
-                        "from source should be equal to sum balance fields on target within " + tolerance +
-                        " tolerance", k -> new java.util.ArrayList<>())
+                                "from source should be equal to sum balance fields on target within " + tolerance +
+                                " tolerance", k -> new java.util.ArrayList<>())
                         .addAll(java.util.Arrays.asList(gpl, gpr));
                 throw new AssertionError(
                         String.format("Balance sum mismatch: sourceSum=%s, targetSum=%s, joinKey=%s",

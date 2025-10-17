@@ -28,6 +28,8 @@ public final class ReconciliationSpec {
     public String mappingCollection;
     public List<Document> mappingDocs;
     public List<Map<String, String>> balanceFieldMappings;
+    // In ReconciliationSpec.java, add:
+    public List<BalanceFieldConfig> balanceFieldConfigs;
 
     public static final class OutputSettings {
         public String baseDir = "target/reports";

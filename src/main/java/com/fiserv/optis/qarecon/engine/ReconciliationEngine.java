@@ -179,6 +179,211 @@ public final class ReconciliationEngine {
         );
     }
 
+    // Add this to ReconciliationEngine.java
+
+    public ReconciliationResult runEnhancedBalanceCheck(
+            List<Document> sourceDocs,
+            List<Document> targetDocs,
+            ReconciliationSpec spec,
+            List<BalanceFieldConfig> sourceConfigs,
+            List<BalanceFieldConfig> targetConfigs,
+            BigDecimal tolerance
+    ) {
+        String runId = spec.runId != null ? spec.runId : String.valueOf(System.currentTimeMillis());
+        spec.runId = runId;
+
+        // Group and aggregate source documents
+        Map<String, Document> sourceAggregated = groupAndAggregate(sourceDocs, sourceConfigs, spec, Side.SOURCE);
+
+        // Group and aggregate target documents
+        Map<String, Document> targetAggregated = groupAndAggregate(targetDocs, targetConfigs, spec, Side.TARGET);
+
+        // Find matched keys
+        Set<String> matched = new HashSet<>(sourceAggregated.keySet());
+        matched.retainAll(targetAggregated.keySet());
+
+        Set<String> sourceOnly = new HashSet<>(sourceAggregated.keySet());
+        sourceOnly.removeAll(targetAggregated.keySet());
+
+        Set<String> targetOnly = new HashSet<>(targetAggregated.keySet());
+        targetOnly.removeAll(sourceAggregated.keySet());
+
+        List<FieldDiff> diffs = new ArrayList<>();
+        List<Pair<Document, Document>> matchedPairs = new ArrayList<>();
+
+        // Compare aggregated values
+        for (String key : matched) {
+            Document srcDoc = sourceAggregated.get(key);
+            Document tgtDoc = targetAggregated.get(key);
+
+            // Extract aggregated balance values
+            BigDecimal srcSum = extractAggregatedBalance(srcDoc, sourceConfigs);
+            BigDecimal tgtSum = extractAggregatedBalance(tgtDoc, targetConfigs);
+
+            if (srcSum.subtract(tgtSum).abs().compareTo(tolerance) > 0) {
+                diffs.add(FieldDiff.number(key, "sourceBalanceSum", "targetBalanceSum",
+                        srcSum, tgtSum, srcSum.subtract(tgtSum).abs(), tolerance));
+            }
+
+            matchedPairs.add(new Pair<>(srcDoc, tgtDoc));
+        }
+
+        double coverage = matched.size() * 100.0 / Math.max(1, Math.max(sourceAggregated.size(), targetAggregated.size()));
+
+        // Calculate totals
+        BigDecimal totalSource = sourceAggregated.values().stream()
+                .map(doc -> extractAggregatedBalance(doc, sourceConfigs))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        BigDecimal totalTarget = targetAggregated.values().stream()
+                .map(doc -> extractAggregatedBalance(doc, targetConfigs))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        Map<String, BigDecimal> leftTotals = new HashMap<>();
+        leftTotals.put("balanceSum", totalSource);
+
+        Map<String, BigDecimal> rightTotals = new HashMap<>();
+        rightTotals.put("balanceSum", totalTarget);
+
+        return new ReconciliationResult(
+                sourceAggregated.size(), targetAggregated.size(),
+                matched.size(), coverage,
+                sourceOnly, targetOnly,
+                leftTotals, rightTotals,
+                diffs,
+                matchedPairs,
+                java.time.Instant.now()
+        );
+    }
+
+    private Map<String, Document> groupAndAggregate(
+            List<Document> docs,
+            List<BalanceFieldConfig> configs,
+            ReconciliationSpec spec,
+            Side side
+    ) {
+        if (configs.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        // Determine grouping fields (use first config's groupBy or join keys)
+        List<String> groupByFields = configs.get(0).getGroupByFields();
+        if (groupByFields == null || groupByFields.isEmpty()) {
+            // Fall back to join keys
+            groupByFields = spec.joinKeys.stream()
+                    .map(k -> side == Side.SOURCE ? k.sourceField : k.targetField)
+                    .collect(Collectors.toList());
+        }
+
+        final List<String> finalGroupByFields = groupByFields;
+
+        // Group documents by key with null-safe handling
+        Map<String, List<Document>> grouped = docs.stream()
+                .collect(Collectors.groupingBy(doc ->
+                        createGroupingKey(doc, finalGroupByFields)
+                ));
+
+        // Aggregate each group
+        Map<String, Document> result = new HashMap<>();
+        for (Map.Entry<String, List<Document>> entry : grouped.entrySet()) {
+            String key = entry.getKey();
+            List<Document> group = entry.getValue();
+
+            Document aggregated = new Document();
+
+            // Store the grouping key fields in the aggregated document
+            for (String field : finalGroupByFields) {
+                Object value = getNestedValue(group.get(0), field);
+                aggregated.put(field, value);
+            }
+
+            // Store the original grouping key for matching
+            aggregated.put("_groupingKey", key);
+
+            // Aggregate balance fields according to their strategies
+            for (BalanceFieldConfig config : configs) {
+                String fieldName = config.getFieldName();
+                AggregationStrategy strategy = config.getAggregationStrategy();
+
+                List<BigDecimal> values = group.stream()
+                        .map(doc -> toBigDecimal(getNestedValue(doc, fieldName)))
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.toList());
+
+                BigDecimal aggregatedValue = applyAggregation(values, strategy);
+                aggregated.put(fieldName + "_aggregated", aggregatedValue);
+            }
+
+            // Store count for reference
+            aggregated.put("_groupCount", group.size());
+
+            result.put(key, aggregated);
+        }
+
+        return result;
+    }
+
+    private String createGroupingKey(Document doc, List<String> fields) {
+        List<Object> values = fields.stream()
+                .map(field -> getNestedValue(doc, field))
+                .collect(Collectors.toList());
+
+        // Option 1: Use hash for very long keys
+        if (shouldUseHash(values)) {
+            return String.valueOf(Objects.hash(values.toArray()));
+        }
+
+        // Option 2: Standard delimiter-based key
+        return values.stream()
+                .map(v -> v != null ? String.valueOf(v).replace("|", "\\|") : "<<NULL>>")
+                .collect(Collectors.joining("|"));
+    }
+
+    private boolean shouldUseHash(List<Object> values) {
+        // Use hash if the combined key would be very long
+        int estimatedLength = values.stream()
+                .mapToInt(v -> v != null ? v.toString().length() : 6)
+                .sum();
+        return estimatedLength > 500; // Threshold
+    }
+
+    private BigDecimal applyAggregation(List<BigDecimal> values, AggregationStrategy strategy) {
+        if (values.isEmpty()) {
+            return BigDecimal.ZERO;
+        }
+
+        switch (strategy) {
+            case SUM:
+                return values.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+            case FIRST:
+                return values.get(0);
+            case LAST:
+                return values.get(values.size() - 1);
+            case MIN:
+                return values.stream().min(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
+            case MAX:
+                return values.stream().max(BigDecimal::compareTo).orElse(BigDecimal.ZERO);
+            case AVG:
+                BigDecimal sum = values.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+                return sum.divide(BigDecimal.valueOf(values.size()), 2, java.math.RoundingMode.HALF_UP);
+            case COUNT:
+                return BigDecimal.valueOf(values.size());
+            default:
+                return BigDecimal.ZERO;
+        }
+    }
+
+    private BigDecimal extractAggregatedBalance(Document doc, List<BalanceFieldConfig> configs) {
+        return configs.stream()
+                .map(config -> {
+                    Object value = doc.get(config.getFieldName() + "_aggregated");
+                    return toBigDecimal(value);
+                })
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+
     private List<Document> fetch(MongoClient client, ReconciliationSpec spec, Side side) {
         String coll = side == Side.SOURCE ? spec.sourceCollection : spec.targetCollection;
         if (coll == null) throw new IllegalArgumentException("Missing collection for " + side);
@@ -310,10 +515,19 @@ public final class ReconciliationEngine {
     }
 
     private Object getNestedValue(Document doc, String fieldPath) {
+        if (doc == null || fieldPath == null || fieldPath.isEmpty()) {
+            return null;
+        }
+
         Object value = doc;
-        for (String key : fieldPath.split("\\.")) {
+        String[] keys = fieldPath.split("\\.");
+
+        for (String key : keys) {
             if (value instanceof Document) {
                 value = ((Document) value).get(key);
+                if (value == null) {
+                    return null;
+                }
             } else {
                 return null;
             }
