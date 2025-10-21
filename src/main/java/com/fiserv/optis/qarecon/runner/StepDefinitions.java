@@ -131,15 +131,6 @@ public class StepDefinitions {
                 .map(FieldMapping::from).collect(Collectors.toList());
     }
 
-    @When("I run the reconciliation with mode {string}")
-    public void runRecon(String mode) {
-        ctx.spec.mode = Mode.valueOf(mode);
-        try (ReconciliationEngine.Clients c = ctx.clients) {
-            ReconciliationEngine engine = new ReconciliationEngine(c.source, c.target);
-            ctx.result = engine.run(ctx.spec);
-        }
-    }
-
     @Then("record counts should match")
     public void countsMatch() {
         try {
@@ -827,4 +818,234 @@ public class StepDefinitions {
             }
         }
     }
+
+    @When("I aggregate and compare balance fields using custom rules")
+    public void i_aggregate_and_compare_using_custom_rules() {
+        if (ctx.spec.balanceFieldConfigs == null || ctx.spec.balanceFieldConfigs.isEmpty()) {
+            throw new IllegalStateException("Balance field configurations are not defined.");
+        }
+
+        if (ctx.spec.balanceComparisonRules == null || ctx.spec.balanceComparisonRules.isEmpty()) {
+            throw new IllegalStateException("Balance comparison rules are not defined.");
+        }
+
+        // Separate source and target configurations
+        List<BalanceFieldConfig> sourceConfigs = ctx.spec.balanceFieldConfigs.stream()
+                .filter(config -> "source".equalsIgnoreCase(config.getCollection()))
+                .collect(Collectors.toList());
+
+        List<BalanceFieldConfig> targetConfigs = ctx.spec.balanceFieldConfigs.stream()
+                .filter(config -> "target".equalsIgnoreCase(config.getCollection()))
+                .collect(Collectors.toList());
+
+        // Run reconciliation with custom rules
+        ReconciliationEngine engine = new ReconciliationEngine(ctx.clients.source, ctx.clients.target);
+        ctx.result = engine.runBalanceCheckWithRules(
+                ctx.sourceDocs,
+                ctx.targetDocs,
+                ctx.spec,
+                sourceConfigs,
+                targetConfigs,
+                ctx.spec.balanceComparisonRules
+        );
+    }
+
+    @Then("all balance comparison rules should pass")
+    public void all_balance_comparison_rules_should_pass() {
+        if (ctx.result == null || ctx.result.fieldDiffs == null) {
+            throw new IllegalStateException("Reconciliation result is missing.");
+        }
+
+        if (!ctx.result.fieldDiffs.isEmpty()) {
+            // Build detailed error report
+            int count = ++counter;
+
+            for (ReconciliationEngine.FieldDiff diff : ctx.result.fieldDiffs) {
+                GenericPojo gpl = GenericPojo.builder()
+                        .uniqueId(count)
+                        .srcOrTar('S')
+                        .collectionName(ctx.spec.sourceCollection)
+                        .genericSingleFieldMap(Map.of(
+                                "rule", diff.leftField,
+                                "sourceValue", (BigDecimal) diff.leftValue,
+                                "groupKey", diff.key
+                        ))
+                        .build();
+
+                GenericPojo gpr = GenericPojo.builder()
+                        .uniqueId(count)
+                        .srcOrTar('T')
+                        .collectionName(ctx.spec.targetCollection)
+                        .genericSingleFieldMap(Map.of(
+                                "rule", diff.rightField,
+                                "targetValue", (BigDecimal) diff.rightValue,
+                                "groupKey", diff.key,
+                                "delta", (BigDecimal) diff.delta
+                        ))
+                        .build();
+
+                if (ReportsContext.genericPojoMapForFailureWithKey == null) {
+                    ReportsContext.genericPojoMapForFailureWithKey = new HashMap<>();
+                }
+
+                ReportsContext.genericPojoMapForFailureWithKey
+                        .computeIfAbsent(scenario.getName(), k -> new HashMap<>())
+                        .computeIfAbsent("all balance comparison rules should pass", k -> new ArrayList<>())
+                        .addAll(Arrays.asList(gpl, gpr));
+            }
+
+            throw new AssertionError(
+                    String.format("Found %d rule violations. Check the report for details.",
+                            ctx.result.fieldDiffs.size())
+            );
+        }
+    }
+
+
+    @Given("balance comparison rules from excel sheet {string}")
+    public void balance_comparison_rules_from_excel_sheet(String sheetName) {
+        if (ctx.spec.configEntity == null) {
+            throw new IllegalStateException("ReconConfigEntity is not loaded.");
+        }
+        ctx.spec.balanceComparisonRules = ctx.spec.configEntity.getBalanceComparisonRules();
+    }
+
+    @When("I run reconciliation with field comparison only")
+    public void i_run_reconciliation_field_only() {
+        runReconciliation(true, false);
+    }
+
+    @When("I run reconciliation with balance validation only")
+    public void i_run_reconciliation_balance_only() {
+        runReconciliation(false, true);
+    }
+
+    @When("I run complete reconciliation with field and balance validation")
+    public void i_run_complete_reconciliation() {
+        runReconciliation(true, true);
+    }
+
+    private void runReconciliation(boolean includeFields, boolean includeBalance) {
+        List<BalanceFieldConfig> sourceConfigs = Collections.emptyList();
+        List<BalanceFieldConfig> targetConfigs = Collections.emptyList();
+        List<BalanceComparisonRule> comparisonRules = Collections.emptyList();
+
+        if (includeBalance && ctx.spec.balanceFieldConfigs != null && !ctx.spec.balanceFieldConfigs.isEmpty()) {
+            sourceConfigs = ctx.spec.balanceFieldConfigs.stream()
+                    .filter(config -> "source".equalsIgnoreCase(config.getCollection()))
+                    .collect(Collectors.toList());
+
+            targetConfigs = ctx.spec.balanceFieldConfigs.stream()
+                    .filter(config -> "target".equalsIgnoreCase(config.getCollection()))
+                    .collect(Collectors.toList());
+
+            if (ctx.spec.balanceComparisonRules != null) {
+                comparisonRules = ctx.spec.balanceComparisonRules;
+            }
+        }
+
+        List<FieldMapping> originalMappings = ctx.spec.mappings;
+        if (!includeFields) {
+            ctx.spec.mappings = Collections.emptyList();
+        }
+
+        try {
+            ReconciliationEngine engine = new ReconciliationEngine(ctx.clients.source, ctx.clients.target);
+            ctx.result = engine.runUnifiedReconciliation(
+                    ctx.sourceDocs,
+                    ctx.targetDocs,
+                    ctx.spec,
+                    sourceConfigs,
+                    targetConfigs,
+                    comparisonRules
+            );
+        } finally {
+            ctx.spec.mappings = originalMappings;
+        }
+    }
+
+    @Then("all field comparisons should pass")
+    public void all_field_comparisons_should_pass() {
+        validateReconciliationResults("field comparisons");
+    }
+
+    @Then("all balance rules should pass")
+    public void all_balance_rules_should_pass() {
+        validateReconciliationResults("balance rules");
+    }
+
+    @Then("all validations should pass")
+    public void all_validations_should_pass() {
+        validateReconciliationResults("all validations");
+    }
+
+    private void validateReconciliationResults(String validationType) {
+        if (ctx.result == null) {
+            throw new IllegalStateException("Reconciliation result is missing.");
+        }
+
+        if (!ctx.result.fieldDiffs.isEmpty()) {
+            int count = ++counter;
+
+            Map<String, List<ReconciliationEngine.FieldDiff>> diffsByType = ctx.result.fieldDiffs.stream()
+                    .collect(Collectors.groupingBy(diff -> diff.type));
+
+            for (Map.Entry<String, List<ReconciliationEngine.FieldDiff>> entry : diffsByType.entrySet()) {
+                String diffType = entry.getKey();
+                List<ReconciliationEngine.FieldDiff> diffs = entry.getValue();
+
+                for (ReconciliationEngine.FieldDiff diff : diffs) {
+                    GenericPojo gpl = GenericPojo.builder()
+                            .uniqueId(count++)
+                            .srcOrTar('S')
+                            .collectionName(ctx.spec.sourceCollection)
+                            .genericSingleFieldMap(new HashMap<>(Map.of(
+                                    "field", diff.leftField,
+                                    "value", diff.leftValue != null ? diff.leftValue : "null",
+                                    "groupKey", diff.key,
+                                    "type", diffType
+                            )))
+                            .build();
+
+                    GenericPojo gpr = GenericPojo.builder()
+                            .uniqueId(count)
+                            .srcOrTar('T')
+                            .collectionName(ctx.spec.targetCollection)
+                            .genericSingleFieldMap(new HashMap<>(Map.of(
+                                    "field", diff.rightField,
+                                    "value", diff.rightValue != null ? diff.rightValue : "null",
+                                    "groupKey", diff.key,
+                                    "type", diffType
+                            )))
+                            .build();
+
+                    if ("number".equals(diffType) && diff.delta != null) {
+                        gpr.getGenericSingleFieldMap().put("delta", diff.delta);
+                        gpr.getGenericSingleFieldMap().put("tolerance", diff.tolerance);
+                    }
+
+                    if (ReportsContext.genericPojoMapForFailureWithKey == null) {
+                        ReportsContext.genericPojoMapForFailureWithKey = new HashMap<>();
+                    }
+
+                    ReportsContext.genericPojoMapForFailureWithKey
+                            .computeIfAbsent(scenario.getName(), k -> new HashMap<>())
+                            .computeIfAbsent(validationType + " should pass", k -> new ArrayList<>())
+                            .addAll(Arrays.asList(gpl, gpr));
+                }
+            }
+
+            Map<String, Long> countsByType = diffsByType.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getKey, e -> (long) e.getValue().size()));
+
+            StringBuilder errorMsg = new StringBuilder("Found validation failures:\n");
+            countsByType.forEach((type, count1) ->
+                    errorMsg.append(String.format("  - %d %s mismatches\n", count1, type))
+            );
+            errorMsg.append("Check the report for details.");
+
+            throw new AssertionError(errorMsg.toString());
+        }
+    }
+
 }

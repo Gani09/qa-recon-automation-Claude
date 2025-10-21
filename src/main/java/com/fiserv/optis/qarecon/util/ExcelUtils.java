@@ -2,6 +2,7 @@ package com.fiserv.optis.qarecon.util;
 
 import com.fiserv.optis.qarecon.model.AggregationStrategy;
 import com.fiserv.optis.qarecon.model.BalanceFieldConfig;
+import com.fiserv.optis.qarecon.model.BalanceComparisonRule;
 import org.apache.poi.ss.usermodel.*;
 import org.bson.Document;
 
@@ -118,35 +119,54 @@ public class ExcelUtils {
 
 
 
-    public static List<BalanceFieldConfig> readBalanceFieldConfigs(Workbook workbook, String sheetName) {
-        List<Map<String, String>> rows = readSheet(workbook, sheetName);
+    public static List<BalanceFieldConfig> readBalanceFieldConfigs(
+            Workbook workbook,
+            String balanceFieldsSheet,
+            String balanceConfigSheet) {
+
+        // Read balance_config sheet for grouping
+        List<Map<String, String>> configRows = readSheet(workbook, balanceConfigSheet);
+        Map<String, List<String>> groupingByCollection = new HashMap<>();
+
+        for (Map<String, String> row : configRows) {
+            String collection = row.get("collection");
+            String groupByStr = row.get("groupByFields");
+
+            if (collection != null && groupByStr != null) {
+                List<String> groupByFields = Arrays.stream(groupByStr.split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toList());
+                groupingByCollection.put(collection.toLowerCase(), groupByFields);
+            }
+        }
+
+        // Read balance_fields sheet
+        List<Map<String, String>> rows = readSheet(workbook, balanceFieldsSheet);
         List<BalanceFieldConfig> configs = new ArrayList<>();
 
         for (Map<String, String> row : rows) {
             String collection = row.get("collection");
             String fieldName = row.get("fieldName");
             String strategyStr = row.get("aggregationStrategy");
-            String groupByStr = row.get("groupByFields");
 
             if (collection == null || fieldName == null) {
                 continue;
             }
 
-            AggregationStrategy strategy = AggregationStrategy.SUM; // default
+            AggregationStrategy strategy = AggregationStrategy.SUM;
             if (strategyStr != null && !strategyStr.trim().isEmpty()) {
                 try {
                     strategy = AggregationStrategy.valueOf(strategyStr.trim().toUpperCase());
                 } catch (IllegalArgumentException e) {
-                    // Use default if invalid
+                    // Use default
                 }
             }
 
-            List<String> groupByFields = new ArrayList<>();
-            if (groupByStr != null && !groupByStr.trim().isEmpty()) {
-                groupByFields = Arrays.stream(groupByStr.split(","))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty())
-                        .collect(Collectors.toList());
+            // Get groupByFields from balance_config
+            List<String> groupByFields = groupingByCollection.get(collection.toLowerCase());
+            if (groupByFields == null) {
+                groupByFields = new ArrayList<>();
             }
 
             BalanceFieldConfig config = new BalanceFieldConfig(
@@ -165,4 +185,50 @@ public class ExcelUtils {
     public static List<Map<String, String>> readFieldMappings(String fileName, String sheetName) throws Exception {
         return readSheet(fileName, sheetName);
     }
+
+    // Add to ExcelUtils.java
+
+    public static List<BalanceComparisonRule> readBalanceComparisonRules(
+            Workbook workbook,
+            String sheetName) {
+
+        List<Map<String, String>> rows = readSheet(workbook, sheetName);
+        List<BalanceComparisonRule> rules = new ArrayList<>();
+
+        for (Map<String, String> row : rows) {
+            String ruleName = row.get("ruleName");
+            String sourceExpression = row.get("sourceExpression");
+            String targetExpression = row.get("targetExpression");
+            String operatorStr = row.get("operator");
+            String tolerance = row.get("tolerance");
+
+            if (ruleName == null || sourceExpression == null || targetExpression == null) {
+                continue;
+            }
+
+            BalanceComparisonRule.ComparisonOperator operator =
+                    BalanceComparisonRule.ComparisonOperator.EQUALS;
+            if (operatorStr != null && !operatorStr.trim().isEmpty()) {
+                try {
+                    operator = BalanceComparisonRule.ComparisonOperator.valueOf(
+                            operatorStr.trim().toUpperCase()
+                    );
+                } catch (IllegalArgumentException e) {
+                    // Use default
+                }
+            }
+
+            BalanceComparisonRule rule = new BalanceComparisonRule(
+                    ruleName.trim(),
+                    sourceExpression.trim(),
+                    targetExpression.trim(),
+                    operator,
+                    tolerance != null ? tolerance.trim() : "0.01"
+            );
+            rules.add(rule);
+        }
+
+        return rules;
+    }
+
 }
