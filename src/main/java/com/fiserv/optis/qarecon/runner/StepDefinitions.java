@@ -649,32 +649,6 @@ public class StepDefinitions {
         ctx.spec.balanceFieldConfigs = ctx.spec.configEntity.getBalanceFieldConfigs();
     }
 
-    @When("I aggregate balance fields for both source and target with grouping and strategy")
-    public void i_aggregate_balance_fields_with_grouping_and_strategy() {
-        if (ctx.spec.balanceFieldConfigs == null || ctx.spec.balanceFieldConfigs.isEmpty()) {
-            throw new IllegalStateException("Balance field configurations are not defined.");
-        }
-
-        // Separate source and target configurations
-        List<BalanceFieldConfig> sourceConfigs = ctx.spec.balanceFieldConfigs.stream()
-                .filter(config -> "source".equalsIgnoreCase(config.getCollection()))
-                .collect(Collectors.toList());
-
-        List<BalanceFieldConfig> targetConfigs = ctx.spec.balanceFieldConfigs.stream()
-                .filter(config -> "target".equalsIgnoreCase(config.getCollection()))
-                .collect(Collectors.toList());
-
-        // Run enhanced reconciliation with grouping and aggregation
-        ReconciliationEngine engine = new ReconciliationEngine(ctx.clients.source, ctx.clients.target);
-        ctx.result = engine.runEnhancedBalanceCheck(
-                ctx.sourceDocs,
-                ctx.targetDocs,
-                ctx.spec,
-                sourceConfigs,
-                targetConfigs,
-                ctx.spec.defaultNumericTolerance != null ? ctx.spec.defaultNumericTolerance : BigDecimal.ZERO
-        );
-    }
 
     @Then("for each matched group, the aggregated balance from source should equal aggregated balance from target within {double} tolerance")
     public void for_each_matched_group_aggregated_balances_should_match_within_tolerance(Double tolerance) {
@@ -737,6 +711,8 @@ public class StepDefinitions {
             );
         }
     }
+
+
 
     // Alternative step with more detailed configuration display
     @Then("aggregated balances should match with the following strategies:")
@@ -818,6 +794,48 @@ public class StepDefinitions {
             }
         }
     }
+
+    @When("I aggregate balance fields for both source and target with grouping and strategy")
+    public void i_aggregate_balance_fields_with_grouping_and_strategy() {
+        if (ctx.spec.balanceFieldConfigs == null || ctx.spec.balanceFieldConfigs.isEmpty()) {
+            throw new IllegalStateException("Balance field configurations are not defined.");
+        }
+
+        // Separate source and target configurations
+        List<BalanceFieldConfig> sourceConfigs = ctx.spec.balanceFieldConfigs.stream()
+                .filter(config -> "source".equalsIgnoreCase(config.getCollection()))
+                .collect(Collectors.toList());
+
+        List<BalanceFieldConfig> targetConfigs = ctx.spec.balanceFieldConfigs.stream()
+                .filter(config -> "target".equalsIgnoreCase(config.getCollection()))
+                .collect(Collectors.toList());
+
+        // Create a default "equals" rule if no custom rules defined
+        List<BalanceComparisonRule> rules = ctx.spec.balanceComparisonRules;
+        if (rules == null || rules.isEmpty()) {
+            // Create a simple sum comparison rule
+            BalanceComparisonRule defaultRule = new BalanceComparisonRule(
+                    "TotalBalance",
+                    sourceConfigs.stream().map(BalanceFieldConfig::getFieldName).collect(Collectors.joining(" + ")),
+                    targetConfigs.stream().map(BalanceFieldConfig::getFieldName).collect(Collectors.joining(" + ")),
+                    BalanceComparisonRule.ComparisonOperator.EQUALS,
+                    ctx.spec.defaultNumericTolerance.toString()
+            );
+            rules = Collections.singletonList(defaultRule);
+        }
+
+
+        ReconciliationEngine engine = new ReconciliationEngine(ctx.clients.source, ctx.clients.target);
+        ctx.result = engine.runBalanceCheckWithRules(
+                ctx.sourceDocs,
+                ctx.targetDocs,
+                ctx.spec,
+                sourceConfigs,
+                targetConfigs,
+                rules
+        );
+    }
+
 
     @When("I aggregate and compare balance fields using custom rules")
     public void i_aggregate_and_compare_using_custom_rules() {
