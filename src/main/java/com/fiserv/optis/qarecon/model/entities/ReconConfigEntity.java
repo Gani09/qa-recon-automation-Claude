@@ -1,6 +1,7 @@
 package com.fiserv.optis.qarecon.model.entities;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fiserv.optis.qarecon.model.BalanceComparisonRule;
 import com.fiserv.optis.qarecon.model.BalanceFieldConfig;
 import com.fiserv.optis.qarecon.model.FieldMapping;
 import org.springframework.data.annotation.Id;
@@ -24,6 +25,7 @@ public class ReconConfigEntity {
     private List<JoinKey> joinKeys;
     private List<FieldMapping> fieldMappings;
     private List<BalanceFieldConfig> balanceFieldConfigs;
+    private List<BalanceComparisonRule> balanceComparisonRules;
 
     // Getters and setters
     public String getConfigId() {
@@ -72,5 +74,13 @@ public class ReconConfigEntity {
 
     public void setBalanceFieldConfigs(List<BalanceFieldConfig> balanceFieldConfigs) {
         this.balanceFieldConfigs = balanceFieldConfigs;
+    }
+
+    public List<BalanceComparisonRule> getBalanceComparisonRules() {
+        return balanceComparisonRules;
+    }
+
+    public void setBalanceComparisonRules(List<BalanceComparisonRule> balanceComparisonRules) {
+        this.balanceComparisonRules = balanceComparisonRules;
     }
 }

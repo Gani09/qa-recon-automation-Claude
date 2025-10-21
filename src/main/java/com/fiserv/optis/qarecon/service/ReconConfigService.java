@@ -1,6 +1,7 @@
 package com.fiserv.optis.qarecon.service;
 
 import com.fiserv.optis.qarecon.model.BalanceFieldConfig;
+import com.fiserv.optis.qarecon.model.BalanceComparisonRule;
 import com.fiserv.optis.qarecon.model.entities.ReconConfigEntity;
 import com.fiserv.optis.qarecon.model.FieldMapping;
 import com.fiserv.optis.qarecon.repository.ReconConfigRepository;
@@ -10,10 +11,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import com.fiserv.optis.qarecon.util.ExcelUtils;
 import java.io.InputStream;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
+
 
 import com.fiserv.optis.qarecon.model.JoinKey;
 
@@ -34,13 +33,9 @@ public class ReconConfigService {
     public ReconConfigEntity processAndSaveConfig(MultipartFile file, String source, String target) throws Exception {
         try (InputStream is = file.getInputStream(); Workbook workbook = WorkbookFactory.create(is)) {
 
-            // Read all sheets
+            // Existing code for filters, join keys, field mappings...
             var filtersSheet = ExcelUtils.readSheet(workbook, "filters");
-            var joinKeysSheet = ExcelUtils.readSheet(workbook, "join_keys");
-            var fieldMappingsSheet = ExcelUtils.readSheet(workbook, "field_mappings");
-
-            // Build filters
-            var filters = new java.util.HashMap<String, Object>();
+            var filters = new HashMap<String, Object>();
             filters.put("sourceFilter", ExcelUtils.buildFilterFromExcelRows(
                     filtersSheet.stream()
                             .filter(row -> "source".equalsIgnoreCase(row.get("collection")))
@@ -50,7 +45,7 @@ public class ReconConfigService {
                             .filter(row -> "target".equalsIgnoreCase(row.get("collection")))
                             .toList()));
 
-            // Build join keys
+            var joinKeysSheet = ExcelUtils.readSheet(workbook, "join_keys");
             List<JoinKey> joinKeys = joinKeysSheet.stream()
                     .map(row -> new JoinKey(
                             row.get("SourceField"),
@@ -60,15 +55,23 @@ public class ReconConfigService {
                     ))
                     .toList();
 
-            // Build field mappings
+            var fieldMappingsSheet = ExcelUtils.readSheet(workbook, "field_mappings");
             List<FieldMapping> fieldMappings = fieldMappingsSheet.stream()
                     .map(FieldMapping::from)
                     .toList();
 
-            // Read balance field configurations
-            List<BalanceFieldConfig> balanceFieldConfigs = ExcelUtils.readBalanceFieldConfigs(workbook, "balance_fields");
+            // MODIFIED: Read balance fields with balance_config for grouping
+            List<BalanceFieldConfig> balanceFieldConfigs =
+                    ExcelUtils.readBalanceFieldConfigs(workbook, "balance_fields", "balance_config");
 
-            // Create and populate entity
+            // NEW: Read balance comparison rules
+            List<BalanceComparisonRule> comparisonRules = new ArrayList<>();
+            try {
+                comparisonRules = ExcelUtils.readBalanceComparisonRules(workbook, "balance_comparison_rules");
+            } catch (Exception e) {
+                // Sheet optional - use empty list if not present
+            }
+
             ReconConfigEntity entity = new ReconConfigEntity();
             entity.setConfigId(UUID.randomUUID().toString());
             entity.setConfigName("Recon_Config_" + source + "-" + target);
@@ -76,8 +79,8 @@ public class ReconConfigService {
             entity.setJoinKeys(joinKeys);
             entity.setFieldMappings(fieldMappings);
             entity.setBalanceFieldConfigs(balanceFieldConfigs);
+            entity.setBalanceComparisonRules(comparisonRules); // NEW
 
-            // Save and return
             return repository.save(entity);
         }
     }

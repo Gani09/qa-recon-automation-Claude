@@ -15,7 +15,6 @@ public final class ReconciliationSpec {
     public Document sourceFilter;
     public Document targetFilter;
     public List<JoinKey> joinKeys;
-    public Mode mode = Mode.ONE_TO_ONE;
     public AggregationPlan leftAgg;
     public AggregationPlan rightAgg;
     public List<FieldMapping> mappings;
@@ -30,6 +29,7 @@ public final class ReconciliationSpec {
     public List<Map<String, String>> balanceFieldMappings;
     // In ReconciliationSpec.java, add:
     public List<BalanceFieldConfig> balanceFieldConfigs;
+    public List<BalanceComparisonRule> balanceComparisonRules;
 
     public static final class OutputSettings {
         public String baseDir = "target/reports";

@@ -3,6 +3,7 @@ package com.fiserv.optis.qarecon.engine;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.fiserv.optis.qarecon.model.*;
+import com.fiserv.optis.qarecon.util.BalanceExpressionEvaluator;
 import com.mongodb.ConnectionString;
 import com.mongodb.MongoClientSettings;
 import com.mongodb.ReadConcern;
@@ -185,18 +186,28 @@ public final class ReconciliationEngine {
             List<Document> sourceDocs,
             List<Document> targetDocs,
             ReconciliationSpec spec,
-            List<BalanceFieldConfig> sourceConfigs,
-            List<BalanceFieldConfig> targetConfigs,
+            BalanceConfiguration balanceConfig,  // Single config object
             BigDecimal tolerance
     ) {
         String runId = spec.runId != null ? spec.runId : String.valueOf(System.currentTimeMillis());
         spec.runId = runId;
 
-        // Group and aggregate source documents
-        Map<String, Document> sourceAggregated = groupAndAggregate(sourceDocs, sourceConfigs, spec, Side.SOURCE);
+        // Get source fields and grouping
+        List<BalanceConfiguration.BalanceField> sourceFields =
+                balanceConfig.getBalanceFieldsForCollection("source");
+        List<String> sourceGroupBy = balanceConfig.getSourceGrouping().getGroupByFields();
 
-        // Group and aggregate target documents
-        Map<String, Document> targetAggregated = groupAndAggregate(targetDocs, targetConfigs, spec, Side.TARGET);
+        // Get target fields and grouping
+        List<BalanceConfiguration.BalanceField> targetFields =
+                balanceConfig.getBalanceFieldsForCollection("target");
+        List<String> targetGroupBy = balanceConfig.getTargetGrouping().getGroupByFields();
+
+
+        // Group and aggregate source documents
+        Map<String, Document> sourceAggregated =
+                groupAndAggregate(sourceDocs, sourceFields, sourceGroupBy);
+        Map<String, Document> targetAggregated =
+                groupAndAggregate(targetDocs, targetFields, targetGroupBy);
 
         // Find matched keys
         Set<String> matched = new HashSet<>(sourceAggregated.keySet());
@@ -256,6 +267,109 @@ public final class ReconciliationEngine {
         );
     }
 
+    // Add to ReconciliationEngine.java
+
+    public ReconciliationResult runBalanceCheckWithRules(
+            List<Document> sourceDocs,
+            List<Document> targetDocs,
+            ReconciliationSpec spec,
+            List<BalanceFieldConfig> sourceConfigs,
+            List<BalanceFieldConfig> targetConfigs,
+            List<BalanceComparisonRule> comparisonRules
+    ) {
+        String runId = spec.runId != null ? spec.runId : String.valueOf(System.currentTimeMillis());
+        spec.runId = runId;
+
+        // Group and aggregate source documents
+        Map<String, Document> sourceAggregated = groupAndAggregate(sourceDocs, sourceConfigs, spec, Side.SOURCE);
+
+        // Group and aggregate target documents
+        Map<String, Document> targetAggregated = groupAndAggregate(targetDocs, targetConfigs, spec, Side.TARGET);
+
+        // Find matched keys
+        Set<String> matched = new HashSet<>(sourceAggregated.keySet());
+        matched.retainAll(targetAggregated.keySet());
+
+        Set<String> sourceOnly = new HashSet<>(sourceAggregated.keySet());
+        sourceOnly.removeAll(targetAggregated.keySet());
+
+        Set<String> targetOnly = new HashSet<>(targetAggregated.keySet());
+        targetOnly.removeAll(sourceAggregated.keySet());
+
+        List<FieldDiff> diffs = new ArrayList<>();
+        List<Pair<Document, Document>> matchedPairs = new ArrayList<>();
+
+        // Apply each comparison rule to each matched group
+        for (String key : matched) {
+            Document srcDoc = sourceAggregated.get(key);
+            Document tgtDoc = targetAggregated.get(key);
+
+            // Evaluate each comparison rule
+            for (BalanceComparisonRule rule : comparisonRules) {
+                // Evaluate source expression
+                BigDecimal sourceValue = BalanceExpressionEvaluator.evaluate(
+                        rule.getSourceExpression(),
+                        srcDoc,
+                        "_aggregated"
+                );
+
+                // Evaluate target expression
+                BigDecimal targetValue = BalanceExpressionEvaluator.evaluate(
+                        rule.getTargetExpression(),
+                        tgtDoc,
+                        "_aggregated"
+                );
+
+                // Get tolerance for this rule
+                BigDecimal tolerance = new BigDecimal(rule.getTolerance());
+
+                // Compare based on operator
+                boolean matches = compareValues(
+                        sourceValue,
+                        targetValue,
+                        rule.getOperator(),
+                        tolerance
+                );
+
+                if (!matches) {
+                    // Create a field diff with the rule name
+                    diffs.add(FieldDiff.number(
+                            key,
+                            rule.getRuleName() + "_source",
+                            rule.getRuleName() + "_target",
+                            sourceValue,
+                            targetValue,
+                            sourceValue.subtract(targetValue).abs(),
+                            tolerance
+                    ));
+                }
+            }
+
+            matchedPairs.add(new Pair<>(srcDoc, tgtDoc));
+        }
+
+        double coverage = matched.size() * 100.0 / Math.max(1, Math.max(sourceAggregated.size(), targetAggregated.size()));
+
+        // Calculate totals (can sum all or just report counts)
+        Map<String, BigDecimal> leftTotals = new HashMap<>();
+        leftTotals.put("groupCount", BigDecimal.valueOf(sourceAggregated.size()));
+
+        Map<String, BigDecimal> rightTotals = new HashMap<>();
+        rightTotals.put("groupCount", BigDecimal.valueOf(targetAggregated.size()));
+
+        return new ReconciliationResult(
+                sourceAggregated.size(), targetAggregated.size(),
+                matched.size(), coverage,
+                sourceOnly, targetOnly,
+                leftTotals, rightTotals,
+                diffs,
+                matchedPairs,
+                java.time.Instant.now()
+        );
+    }
+
+
+
     private Map<String, Document> groupAndAggregate(
             List<Document> docs,
             List<BalanceFieldConfig> configs,
@@ -266,10 +380,9 @@ public final class ReconciliationEngine {
             return Collections.emptyMap();
         }
 
-        // Determine grouping fields (use first config's groupBy or join keys)
+        // Determine grouping fields
         List<String> groupByFields = configs.get(0).getGroupByFields();
         if (groupByFields == null || groupByFields.isEmpty()) {
-            // Fall back to join keys
             groupByFields = spec.joinKeys.stream()
                     .map(k -> side == Side.SOURCE ? k.sourceField : k.targetField)
                     .collect(Collectors.toList());
@@ -291,16 +404,15 @@ public final class ReconciliationEngine {
 
             Document aggregated = new Document();
 
-            // Store the grouping key fields in the aggregated document
+            // Store grouping key fields
             for (String field : finalGroupByFields) {
                 Object value = getNestedValue(group.get(0), field);
                 aggregated.put(field, value);
             }
 
-            // Store the original grouping key for matching
             aggregated.put("_groupingKey", key);
 
-            // Aggregate balance fields according to their strategies
+            // Aggregate balance fields
             for (BalanceFieldConfig config : configs) {
                 String fieldName = config.getFieldName();
                 AggregationStrategy strategy = config.getAggregationStrategy();
@@ -314,9 +426,7 @@ public final class ReconciliationEngine {
                 aggregated.put(fieldName + "_aggregated", aggregatedValue);
             }
 
-            // Store count for reference
             aggregated.put("_groupCount", group.size());
-
             result.put(key, aggregated);
         }
 
@@ -324,27 +434,225 @@ public final class ReconciliationEngine {
     }
 
     private String createGroupingKey(Document doc, List<String> fields) {
+        if (fields == null || fields.isEmpty()) {
+            return "DEFAULT_KEY";
+        }
+
         List<Object> values = fields.stream()
                 .map(field -> getNestedValue(doc, field))
                 .collect(Collectors.toList());
 
-        // Option 1: Use hash for very long keys
+        // Use hash for very long keys
         if (shouldUseHash(values)) {
             return String.valueOf(Objects.hash(values.toArray()));
         }
 
-        // Option 2: Standard delimiter-based key
+        // Standard delimiter-based key
         return values.stream()
                 .map(v -> v != null ? String.valueOf(v).replace("|", "\\|") : "<<NULL>>")
                 .collect(Collectors.joining("|"));
     }
 
     private boolean shouldUseHash(List<Object> values) {
-        // Use hash if the combined key would be very long
         int estimatedLength = values.stream()
                 .mapToInt(v -> v != null ? v.toString().length() : 6)
                 .sum();
-        return estimatedLength > 500; // Threshold
+        return estimatedLength > 500;
+    }
+
+
+    public ReconciliationResult runUnifiedReconciliation(
+            List<Document> sourceDocs,
+            List<Document> targetDocs,
+            ReconciliationSpec spec,
+            List<BalanceFieldConfig> sourceBalanceConfigs,
+            List<BalanceFieldConfig> targetBalanceConfigs,
+            List<BalanceComparisonRule> comparisonRules
+    ) {
+        String runId = spec.runId != null ? spec.runId : String.valueOf(System.currentTimeMillis());
+        spec.runId = runId;
+
+        // Check what validations are configured
+        boolean hasFieldMappings = spec.mappings != null && !spec.mappings.isEmpty();
+        boolean hasBalanceConfigs = sourceBalanceConfigs != null && !sourceBalanceConfigs.isEmpty();
+        boolean hasBalanceRules = comparisonRules != null && !comparisonRules.isEmpty();
+
+        // Group/aggregate or just key documents
+        Map<String, Document> sourceAggregated;
+        Map<String, Document> targetAggregated;
+
+        if (hasBalanceConfigs || hasBalanceRules) {
+            sourceAggregated = groupAndAggregate(sourceDocs,
+                    sourceBalanceConfigs != null ? sourceBalanceConfigs : Collections.emptyList(),
+                    spec, Side.SOURCE);
+            targetAggregated = groupAndAggregate(targetDocs,
+                    targetBalanceConfigs != null ? targetBalanceConfigs : Collections.emptyList(),
+                    spec, Side.TARGET);
+        } else {
+            sourceAggregated = toMap(sourceDocs, spec, Side.SOURCE);
+            targetAggregated = toMap(targetDocs, spec, Side.TARGET);
+        }
+
+        // Find matched keys
+        Set<String> sourceKeys = sourceAggregated.keySet();
+        Set<String> targetKeys = targetAggregated.keySet();
+
+        Set<String> matched = new HashSet<>(sourceKeys);
+        matched.retainAll(targetKeys);
+
+        Set<String> sourceOnly = new HashSet<>(sourceKeys);
+        sourceOnly.removeAll(targetKeys);
+
+        Set<String> targetOnly = new HashSet<>(targetKeys);
+        targetOnly.removeAll(sourceKeys);
+
+        List<FieldDiff> diffs = new ArrayList<>();
+        List<Pair<Document, Document>> matchedPairs = new ArrayList<>();
+
+        // For each matched key, perform configured validations
+        for (String key : matched) {
+            Document srcDoc = sourceAggregated.get(key);
+            Document tgtDoc = targetAggregated.get(key);
+
+            // Field-by-field comparison if configured
+            if (hasFieldMappings) {
+                List<FieldDiff> fieldDiffs = compareFields(key, srcDoc, tgtDoc, spec, hasBalanceConfigs);
+                diffs.addAll(fieldDiffs);
+            }
+
+            // Balance comparison rules if configured
+            if (hasBalanceRules) {
+                List<FieldDiff> balanceDiffs = compareBalanceRules(key, srcDoc, tgtDoc, comparisonRules);
+                diffs.addAll(balanceDiffs);
+            }
+
+            matchedPairs.add(new Pair<>(srcDoc, tgtDoc));
+        }
+
+        double coverage = matched.size() * 100.0 / Math.max(1, Math.max(sourceKeys.size(), targetKeys.size()));
+
+        Map<String, BigDecimal> leftTotals = new HashMap<>();
+        Map<String, BigDecimal> rightTotals = new HashMap<>();
+
+        if (hasBalanceConfigs) {
+            leftTotals = totals(sourceAggregated, spec, Side.SOURCE);
+            rightTotals = totals(targetAggregated, spec, Side.TARGET);
+        }
+
+        return new ReconciliationResult(
+                sourceAggregated.size(), targetAggregated.size(),
+                matched.size(), coverage,
+                sourceOnly, targetOnly,
+                leftTotals, rightTotals,
+                diffs,
+                matchedPairs,
+                java.time.Instant.now()
+        );
+    }
+
+    private List<FieldDiff> compareFields(String key, Document srcDoc, Document tgtDoc,
+                                          ReconciliationSpec spec, boolean hasBalanceConfigs) {
+        List<FieldDiff> diffs = new ArrayList<>();
+
+        for (FieldMapping fm : spec.mappings) {
+            String srcField = fm.getLeftField();
+            String tgtField = fm.getRightField();
+
+            String srcFieldName = srcField;
+            String tgtFieldName = tgtField;
+
+            if (hasBalanceConfigs) {
+                if (srcDoc.containsKey(srcField + "_aggregated")) {
+                    srcFieldName = srcField + "_aggregated";
+                }
+                if (tgtDoc.containsKey(tgtField + "_aggregated")) {
+                    tgtFieldName = tgtField + "_aggregated";
+                }
+            }
+
+            switch (fm.getCompareAs().toLowerCase()) {
+                case "number": {
+                    BigDecimal lt = toBigDecimal(srcDoc.get(srcFieldName));
+                    BigDecimal rt = toBigDecimal(tgtDoc.get(tgtFieldName));
+                    BigDecimal tol = fm.numericToleranceOr(spec.defaultNumericTolerance);
+
+                    if (!numEq(lt, rt, tol)) {
+                        diffs.add(FieldDiff.number(key, srcField, tgtField, lt, rt,
+                                lt == null || rt == null ? null : lt.subtract(rt).abs(), tol));
+                    }
+                    break;
+                }
+                case "datetime": {
+                    Instant li = toInstant(srcDoc.get(srcFieldName));
+                    Instant ri = toInstant(tgtDoc.get(tgtFieldName));
+                    Duration tol = fm.timeToleranceOr(spec.defaultTimeTolerance);
+
+                    if (!timeEq(li, ri, tol)) {
+                        diffs.add(FieldDiff.time(key, srcField, tgtField, li, ri, tol));
+                    }
+                    break;
+                }
+                default: {
+                    String ls = toString(srcDoc.get(srcFieldName));
+                    String rs = toString(tgtDoc.get(tgtFieldName));
+
+                    if (!Objects.equals(ls, rs)) {
+                        diffs.add(FieldDiff.string(key, srcField, tgtField, ls, rs));
+                    }
+                    break;
+                }
+            }
+        }
+
+        return diffs;
+    }
+
+    private List<FieldDiff> compareBalanceRules(String key, Document srcDoc, Document tgtDoc,
+                                                List<BalanceComparisonRule> rules) {
+        List<FieldDiff> diffs = new ArrayList<>();
+
+        for (BalanceComparisonRule rule : rules) {
+            BigDecimal sourceValue = BalanceExpressionEvaluator.evaluate(
+                    rule.getSourceExpression(), srcDoc, "_aggregated");
+
+            BigDecimal targetValue = BalanceExpressionEvaluator.evaluate(
+                    rule.getTargetExpression(), tgtDoc, "_aggregated");
+
+            BigDecimal tolerance = new BigDecimal(rule.getTolerance());
+
+            boolean matches = compareValues(sourceValue, targetValue, rule.getOperator(), tolerance);
+
+            if (!matches) {
+                diffs.add(FieldDiff.number(key,
+                        rule.getRuleName() + "_source",
+                        rule.getRuleName() + "_target",
+                        sourceValue, targetValue,
+                        sourceValue.subtract(targetValue).abs(), tolerance));
+            }
+        }
+
+        return diffs;
+    }
+
+    private boolean compareValues(BigDecimal sourceValue, BigDecimal targetValue,
+                                  BalanceComparisonRule.ComparisonOperator operator,
+                                  BigDecimal tolerance) {
+        BigDecimal diff = sourceValue.subtract(targetValue);
+
+        switch (operator) {
+            case EQUALS:
+                return diff.abs().compareTo(tolerance) <= 0;
+            case GREATER_THAN:
+                return diff.compareTo(tolerance) > 0;
+            case LESS_THAN:
+                return diff.compareTo(tolerance.negate()) < 0;
+            case GREATER_OR_EQUAL:
+                return diff.compareTo(tolerance.negate()) >= 0;
+            case LESS_OR_EQUAL:
+                return diff.compareTo(tolerance) <= 0;
+            default:
+                return false;
+        }
     }
 
     private BigDecimal applyAggregation(List<BigDecimal> values, AggregationStrategy strategy) {
