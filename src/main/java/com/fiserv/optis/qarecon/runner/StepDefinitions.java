@@ -649,67 +649,6 @@ public class StepDefinitions {
         ctx.spec.mappingDocs = mappingDocs;
     }
 
-    @Given("balance fields from source and target are listed in excel sheet {string}")
-    public void balance_fields_from_source_and_target_are_listed_in_excel_sheet(String sheetName) {
-        if (ctx.spec.configEntity == null || ctx.spec.configEntity.getBalanceFields() == null) {
-            throw new IllegalStateException("ReconConfigEntity or its balance fields are not loaded.");
-        }
-        // Convert the balanceFields map to a list of maps for compatibility
-        ctx.spec.balanceFieldMappings = ctx.spec.configEntity.getBalanceFields().entrySet().stream()
-                .flatMap( entry -> entry.getValue().stream()
-                        .map( field -> {
-                            Map<String, String> map = new HashMap<>();
-                            map.put("collection", entry.getKey());
-                            map.put("fieldName", field);
-                            return map;
-                        })
-                ).collect(Collectors.toList());
-    }
-
-    @When("I sum balance fields for both source and target")
-    public void i_sum_balance_fields_for_both_source_and_target() {
-        // Ensure balance field mappings are loaded
-        if (ctx.spec.balanceFieldMappings == null || ctx.spec.balanceFieldMappings.isEmpty()) {
-            throw new IllegalStateException("Balance field mappings are not defined.");
-        }
-
-        // Extract source and target balance field names
-        // Extract source and target balance field names
-        List<String> sourceFields = ctx.spec.balanceFieldMappings.stream()
-                .filter( row -> "source".equals(row.get("collection")))
-                .map( row -> row.get("fieldName"))
-                .filter(Objects::nonNull)
-                .toList();
-
-        List<String> targetFields = ctx.spec.balanceFieldMappings.stream()
-                .filter( row -> "target".equals(row.get("collection")))
-                .map( row -> row.get("fieldName"))
-                .filter(Objects::nonNull)
-                .toList();
-
-        // Run reconciliation to populate matchedPairs
-        ReconciliationEngine engine = new ReconciliationEngine(ctx.clients.source, ctx.clients.target);
-        ctx.result = engine.runBalanceCheck(
-                ctx.sourceDocs,
-                ctx.targetDocs,
-                ctx.spec,
-                sourceFields,
-                targetFields,
-                ctx.spec.defaultNumericTolerance != null ? ctx.spec.defaultNumericTolerance : BigDecimal.ZERO
-        );
-
-        // For each matched pair, sum the balance fields and store in the pair's documents
-        for (com.fiserv.optis.qarecon.model.Pair<org.bson.Document, org.bson.Document> pair : ctx.result.matchedPairs) {
-            double sourceSum = sourceFields.stream().mapToDouble(f->toDouble(pair.getLeft().get(f))).sum();
-
-            double targetSum = targetFields.stream().mapToDouble(f-> toDouble(pair.getRight().get(f))).sum();
-
-            pair.getLeft().put("_balanceSum",sourceSum);
-            pair.getRight().put("_balanceSum",targetSum);
-        }
-    }
-
-    // Add these methods to StepDefinitions.java
 
     @Given("balance field configurations from excel sheet {string}")
     public void balance_field_configurations_from_excel_sheet(String sheetName) {

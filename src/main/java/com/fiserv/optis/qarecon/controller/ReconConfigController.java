@@ -1,5 +1,6 @@
 package com.fiserv.optis.qarecon.controller;
 
+import com.fiserv.optis.qarecon.model.ReconConfigSummaryDto;
 import com.fiserv.optis.qarecon.model.entities.ReconConfigEntity;
 import com.fiserv.optis.qarecon.service.ReconConfigService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -31,10 +32,12 @@ public class ReconConfigController {
     }
 
     @Operation(summary = "Lists all Configurations")
-    @ApiResponse(responseCode = "200", description = "Lists all available configurations in the database")
+    @ApiResponse(responseCode = "200", description = "Lists all available configuration summaries (ID and Name only)")
     @GetMapping("/listAll")
-    public List<ReconConfigEntity> listAll() {
-        return service.getAllConfigs();
+    public List<ReconConfigSummaryDto> listAll() {
+        return service.getAllConfigs().stream()
+                .map(config -> new ReconConfigSummaryDto(config.getConfigId(), config.getConfigName()))
+                .toList();
     }
 
     @Operation(summary = "Get configuration by ID", description = "Fetches a reconciliation configuration by its unique ID")
