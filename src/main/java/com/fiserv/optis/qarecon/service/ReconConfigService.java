@@ -12,6 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.fiserv.optis.qarecon.util.ExcelUtils;
 import java.io.InputStream;
 import java.util.*;
+import org.bson.Document;
 
 
 import com.fiserv.optis.qarecon.model.JoinKey;
@@ -83,5 +84,69 @@ public class ReconConfigService {
 
             return repository.save(entity);
         }
+    }
+
+    private Document convertLongToDate(Object filterObj) {
+        Document doc;
+        if (filterObj instanceof Document) {
+            doc = (Document) filterObj;
+        } else if (filterObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> map = (Map<String, Object>) filterObj;
+            doc = new Document(map);
+        } else {
+            return new Document();
+        }
+
+        return recursiveConvertLongToDate(doc);
+    }
+
+    private Document recursiveConvertLongToDate(Document doc) {
+        Document result = new Document();
+        for (Map.Entry<String, Object> entry : doc.entrySet()) {
+            String key = entry.getKey();
+            Object value = entry.getValue();
+
+            if (value instanceof Document) {
+                result.put(key, recursiveConvertLongToDate((Document) value));
+            } else if (value instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> map = (Map<String, Object>) value;
+                result.put(key, recursiveConvertLongToDate(new Document(map)));
+            } else if (value instanceof List) {
+                @SuppressWarnings("unchecked")
+                List<Object> list = (List<Object>) value;
+                List<Object> convertedList = new ArrayList<>();
+                for (Object item : list) {
+                    if (item instanceof Document) {
+                        convertedList.add(recursiveConvertLongToDate((Document) item));
+                    } else if (item instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> map = (Map<String, Object>) item;
+                        convertedList.add(recursiveConvertLongToDate(new Document(map)));
+                    } else if (item instanceof Long) {
+                        Long longValue = (Long) item;
+                        if (longValue > 0 && longValue < 4102444800000L) {
+                            convertedList.add(new java.util.Date(longValue));
+                        } else {
+                            convertedList.add(item);
+                        }
+                    } else {
+                        convertedList.add(item);
+                    }
+                }
+                result.put(key, convertedList);
+            } else if (value instanceof Long) {
+                Long longValue = (Long) value;
+                if (longValue > 0 && longValue < 4102444800000L) {
+                    result.put(key, new java.util.Date(longValue));
+                } else {
+                    result.put(key, value);
+                }
+            } else {
+                result.put(key, value);
+            }
+        }
+        return result;
     }
 }
