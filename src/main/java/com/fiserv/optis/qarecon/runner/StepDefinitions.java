@@ -195,8 +195,8 @@ public class StepDefinitions {
         ctx.spec.sourceCollection = coll;
 
         // Convert long values to Date objects before using the filter
-        Document convertedFilter = ReconConfigService.convertLongToDate(sourceFilterObj);
-        ctx.spec.sourceFilter = convertedFilter;
+        ctx.spec.sourceFilter = ReconConfigService.convertLongToDate(sourceFilterObj);
+
     }
 
     @Given("target collection {string} is filtered by excel sheet {string}")
@@ -211,8 +211,8 @@ public class StepDefinitions {
         ctx.spec.targetCollection = coll;
 
         // Convert long values to Date objects before using the filter
-        Document convertedFilter = ReconConfigService.convertLongToDate(targetFilterObj);
-        ctx.spec.targetFilter = convertedFilter;
+        ctx.spec.targetFilter = ReconConfigService.convertLongToDate(targetFilterObj);
+
     }
 
     @Given("join keys from excel sheet {string}")
