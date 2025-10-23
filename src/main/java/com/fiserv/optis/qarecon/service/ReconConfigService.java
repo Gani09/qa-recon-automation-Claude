@@ -86,7 +86,7 @@ public class ReconConfigService {
         }
     }
 
-    private Document convertLongToDate(Object filterObj) {
+    public static Document convertLongToDate(Object filterObj) {
         Document doc;
         if (filterObj instanceof Document) {
             doc = (Document) filterObj;
@@ -101,7 +101,7 @@ public class ReconConfigService {
         return recursiveConvertLongToDate(doc);
     }
 
-    private Document recursiveConvertLongToDate(Document doc) {
+    public static Document recursiveConvertLongToDate(Document doc) {
         Document result = new Document();
         for (Map.Entry<String, Object> entry : doc.entrySet()) {
             String key = entry.getKey();

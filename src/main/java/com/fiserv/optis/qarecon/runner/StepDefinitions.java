@@ -9,6 +9,7 @@ import com.fiserv.optis.qarecon.model.*;
 import com.fiserv.optis.qarecon.report.model.GenericPojo;
 import com.fiserv.optis.qarecon.service.CryptService;
 import com.fiserv.optis.qarecon.service.MongoService;
+import com.fiserv.optis.qarecon.service.ReconConfigService;
 import com.fiserv.optis.qarecon.util.ReportWriter;
 import io.cucumber.datatable.DataTable;
 import io.cucumber.java.Scenario;
@@ -76,7 +77,7 @@ public class StepDefinitions {
 
     @Given("configuration {string} from {string}")
     public void setExcelFileAsConfiguration(String configName, String configTable) {
-        String[] parts = configTable.split( "\\.",  2);
+        String[] parts = configTable.split("\\.", 2);
         String dbName = parts[0];
         String collName = parts[1];
         Document filter = new Document("configName", configName);
@@ -192,11 +193,10 @@ public class StepDefinitions {
             throw new IllegalArgumentException("No source filter found in ReconConfigEntity.");
         }
         ctx.spec.sourceCollection = coll;
-        if (sourceFilterObj instanceof Document) {
-            ctx.spec.sourceFilter = (Document) sourceFilterObj;
-        } else {
-            ctx.spec.sourceFilter = new Document((Map<String, Object>) sourceFilterObj);
-        }
+
+        // Convert long values to Date objects before using the filter
+        Document convertedFilter = ReconConfigService.convertLongToDate(sourceFilterObj);
+        ctx.spec.sourceFilter = convertedFilter;
     }
 
     @Given("target collection {string} is filtered by excel sheet {string}")
@@ -209,11 +209,10 @@ public class StepDefinitions {
             throw new IllegalArgumentException("No target filter found in ReconConfigEntity.");
         }
         ctx.spec.targetCollection = coll;
-        if (targetFilterObj instanceof Document) {
-            ctx.spec.targetFilter = (Document) targetFilterObj;
-        } else {
-            ctx.spec.targetFilter = new Document((Map<String, Object>) targetFilterObj);
-        }
+
+        // Convert long values to Date objects before using the filter
+        Document convertedFilter = ReconConfigService.convertLongToDate(targetFilterObj);
+        ctx.spec.targetFilter = convertedFilter;
     }
 
     @Given("join keys from excel sheet {string}")
